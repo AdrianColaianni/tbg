@@ -3,10 +3,9 @@ use crossterm::{
     event::{self, Event as CEvent, KeyCode},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use rand::{distributions::Alphanumeric, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use std::{cmp, fs, io, sync::mpsc, thread};
+use std::{fs, io, sync::mpsc, thread};
 use thiserror::Error;
 use tui::{
     backend::CrosstermBackend,
@@ -88,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     task_state.select(None);
 
     let tasklists = read_db();
+    let mut task_len = tasklists[0].tasks.len() - 1;
 
     loop {
         terminal.draw(|rect| {
@@ -118,11 +118,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .selected()
                 .expect("There must be a selected list");
             let tasks = render_tasks(&tasklists[selected_list]);
+            task_len = tasklists[selected_list].tasks.len() - 1;
             rect.render_stateful_widget(lists, list_chunks[0], &mut list_state);
             rect.render_stateful_widget(tasks, list_chunks[1], &mut task_state);
         })?;
 
-        let list_len = tasklists.len();
+        let list_len = tasklists.len() - 1;
 
         match rx.recv()? {
             Event::Input(event) => match task_state.selected() {
@@ -136,11 +137,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         task_state.select(None);
                     }
                     KeyCode::Char('j') => {
-                        task_state.select(Some(task_selected + 1 % list_len));
+                        if task_selected != task_len {
+                            task_state.select(Some(task_selected + 1));
+                        }
                     }
                     KeyCode::Char('k') => {
-                        task_state
-                            .select(Some(cmp::max(0isize, task_selected as isize - 1) as usize));
+                        if task_selected != 0 {
+                            task_state.select(Some(task_selected as usize - 1));
+                        }
                     }
                     _ => {}
                 },
@@ -152,19 +156,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Char('j') => {
                         if let Some(selected) = list_state.selected() {
-                            if selected >= list_len - 1 {
-                                list_state.select(Some(0));
-                            } else {
+                            if selected != list_len {
                                 list_state.select(Some(selected + 1));
                             }
                         }
                     }
                     KeyCode::Char('k') => {
                         if let Some(selected) = list_state.selected() {
-                            if selected > 0 {
+                            if selected != 0 {
                                 list_state.select(Some(selected - 1));
-                            } else {
-                                list_state.select(Some(list_len - 1));
                             }
                         }
                     }
@@ -213,31 +213,26 @@ fn render_tasks<'a>(list: &TaskList) -> Table<'a> {
             Row::new(vec![
                 Cell::from(Span::raw(task.name.to_owned())),
                 Cell::from(Span::raw(format!("{:?}", task.tags))),
-                Cell::from(Span::raw(task.start_date.to_string())),
-                Cell::from(Span::raw(task.due_date.to_string())),
+                Cell::from(Span::raw(format!("{}", task.start_date.format("%D %T")))),
+                Cell::from(Span::raw(format!("{}", task.due_date.format("%D %T")))),
             ])
         })
         .collect();
 
+    let table = ["Name", "Tags", "Start Date", "Due Date"];
+
+    let table = table
+        .iter()
+        .map(|t| {
+            Cell::from(Span::styled(
+                t.to_owned(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect::<Vec<Cell>>();
+
     let table = Table::new(tasks)
-        .header(Row::new(vec![
-            Cell::from(Span::styled(
-                "Name",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Tags",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Start Date",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Due Date",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-        ]))
+        .header(Row::new(table))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -246,10 +241,10 @@ fn render_tasks<'a>(list: &TaskList) -> Table<'a> {
                 .border_type(BorderType::Plain),
         )
         .widths(&[
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ])
         .highlight_style(
             Style::default()
